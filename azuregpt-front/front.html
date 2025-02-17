@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Chat UI with Bootstrap</title>
+    <meta charset="UTF-8" />
+    <link
+      href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+      #chat-box {
+        height: 350px;
+        overflow-y: auto;
+        margin-bottom: 10px;
+      }
+
+      .my-message {
+        text-align: right;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="row justify-content-center mt-5">
+        <div class="col-md-6">
+          <div class="card">
+            <div class="card-body" id="chat-box">
+              <p class="other-message">안녕하세요!</p>
+              <p class="other-message">간단한 채팅 UI 테스트 중입니다.</p>
+            </div>
+            <div class="card-footer">
+              <input
+                type="text"
+                id="message-input"
+                class="form-control"
+                placeholder="메시지를 입력하세요"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // 1. channel_id를 받아와
+      // 2. 아이디로 토큰을 받고
+      // 3. 토큰으로 웹소켓 연결
+      let CHANNEL_ID = null;
+      // const API_URL = "http://localhost:7071";
+      const API_URL =
+        "https://jhgpt-api-function-brcwhvbkdcg2gcdb.koreacentral-01.azurewebsites.net";
+
+      function getChannelId() {
+        return $.ajax({
+          url: `${API_URL}/channel-id`,
+          type: "GET",
+          dataType: "json",
+        });
+      }
+
+      function getPubSubToken(channelId) {
+        return $.ajax({
+          url: `${API_URL}/pubsub/token?channel_id=${channelId}`,
+          type: "GET",
+          dataType: "json",
+        });
+      }
+
+      function connectWebSocket(channelId, token) {
+        // 허브이름 dev_hub로 고정
+        const WEB_SOCKET_URL = `wss://devpark-gpt-ps.webpubsub.azure.com/client/hubs/dev_hub?access_token=${token}`;
+        // websocket ( url, protocol )
+        const pubsubClient = new WebSocket(
+          WEB_SOCKET_URL,
+          "json.webpubsub.azure.v1"
+        );
+        // 웹소켓 이벤트 핸들러
+        pubsubClient.onopen = function (event) {
+          console.log("웹소켓 연결 성공");
+          // 그룹 가입 요청
+          // let ackId = 0;
+          pubsubClient.send(
+            JSON.stringify({
+              type: "joinGroup",
+              group: channelId,
+              // ackId: ++ackId, // 메시지 식별자 (생략가능)
+            })
+          );
+        };
+        // 웹소켓 메시지 수신 이벤트 핸들러
+        pubsubClient.onmessage = function (event) {
+          let message = JSON.parse(event.data);
+          console.log("메시지 수신: ", message);
+          if (message.data && message.data.content !== "") {
+            $("#chat-box").append(
+              '<p class="other-message">' + message.data.content + "</p>"
+            );
+            $("#chat-box").scrollTop($("#chat-box")[0].scrollHeight);
+          }
+        };
+      }
+
+      $(document).ready(function () {
+        getChannelId()
+          .then((response) => {
+            CHANNEL_ID = response.channel_id;
+            console.log(CHANNEL_ID);
+            return getPubSubToken(CHANNEL_ID);
+          })
+          .then((response) => {
+            const token = response.token;
+            connectWebSocket(CHANNEL_ID, token);
+          });
+
+        $("#message-input").keydown(function (event) {
+          // mac os 엔터 두번되는 방어 코드
+          if (event.isComposing || event.keyCode === 229) {
+            return;
+          }
+          if (event.key === "Enter") {
+            // 화면에 메세지 추가
+            var message = $(this).val();
+            if (message.trim() !== "") {
+              $("#chat-box").append(
+                '<p class="my-message">' + message + "</p>"
+              );
+              $(this).val("");
+              $("#chat-box").scrollTop($("#chat-box")[0].scrollHeight);
+              // 웹소켓으로 메시지 전송
+              $.ajax({
+                url: `${API_URL}/question`,
+                type: "POST",
+                contentType: "application/json",
+                data: JSON.stringify({
+                  channel_id: CHANNEL_ID,
+                  content: message,
+                }),
+                success: function (response) {
+                  console.log(response);
+                },
+                error: function (err) {
+                  $("#chat-box").append(
+                    '<p class="my-message">' + "에러가 발생했습니다." + "</p>"
+                  );
+                },
+              });
+            }
+          }
+        });
+      });
+    </script>
+  </body>
+</html>
